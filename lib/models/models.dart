@@ -12,8 +12,8 @@ class ServiceType {
   final int? id;
   final String name;
   final ExpenseCategory category;
-  final double? unitPrice;       // 单价（可选）
-  final bool isActive;          // 是否启用
+  final double? unitPrice;
+  final bool isActive;
   final DateTime createdAt;
 
   ServiceType({
@@ -39,11 +39,13 @@ class ServiceType {
   factory ServiceType.fromMap(Map<String, dynamic> map) {
     return ServiceType(
       id: map['id'],
-      name: map['name'],
-      category: ExpenseCategory.values[map['category'] ?? 0],
+      name: map['name'] ?? '',
+      category: (map['category'] ?? 0) is int && (map['category'] as int) < ExpenseCategory.values.length
+          ? ExpenseCategory.values[map['category'] as int]
+          : ExpenseCategory.other,
       unitPrice: map['unitPrice'] != null ? (map['unitPrice'] as num).toDouble() : null,
       isActive: (map['isActive'] ?? 1) == 1,
-      createdAt: DateTime.parse(map['createdAt']),
+      createdAt: _parseDateTime(map['createdAt']),
     );
   }
 
@@ -72,7 +74,7 @@ class Customer {
   final String name;
   final String phone;
   final String? companyName;
-  final double prepaidBalance;    // 预交款余额
+  final double prepaidBalance;
   final DateTime createdAt;
 
   Customer({
@@ -98,11 +100,11 @@ class Customer {
   factory Customer.fromMap(Map<String, dynamic> map) {
     return Customer(
       id: map['id'],
-      name: map['name'],
-      phone: map['phone'],
+      name: map['name'] ?? '',
+      phone: map['phone'] ?? '',
       companyName: map['companyName'],
       prepaidBalance: (map['prepaidBalance'] ?? 0).toDouble(),
-      createdAt: DateTime.parse(map['createdAt']),
+      createdAt: _parseDateTime(map['createdAt']),
     );
   }
 
@@ -157,11 +159,13 @@ class Copier {
   factory Copier.fromMap(Map<String, dynamic> map) {
     return Copier(
       id: map['id'],
-      name: map['name'],
+      name: map['name'] ?? '',
       pricePerPage: (map['pricePerPage'] ?? 0).toDouble(),
       customerId: map['customerId'],
-      status: CopierStatus.values[map['status'] ?? 0],
-      createdAt: DateTime.parse(map['createdAt']),
+      status: (map['status'] ?? 0) is int && (map['status'] as int) < CopierStatus.values.length
+          ? CopierStatus.values[map['status'] as int]
+          : CopierStatus.idle,
+      createdAt: _parseDateTime(map['createdAt']),
     );
   }
 
@@ -189,16 +193,16 @@ enum CopierStatus { idle, inUse, maintenance }
 // ============ 交易记录模型 ============
 class Transaction {
   final int? id;
-  final int? serviceTypeId;     // 服务类型ID
-  final double amount;           // 金额（正数表示收入，负数表示支出/结款）
+  final int? serviceTypeId;
+  final double amount;
   final String? description;
   final int? customerId;
   final int? copierId;
   final int? pages;
   final PaymentMethod paymentMethod;
   final ExpenseCategory expenseCategory;
-  final TransactionType type;    // 交易类型
-  final bool isPaid;             // 是否已结款
+  final TransactionType type;
+  final bool isPaid;
   final DateTime createdAt;
 
   Transaction({
@@ -212,7 +216,7 @@ class Transaction {
     this.paymentMethod = PaymentMethod.cash,
     required this.expenseCategory,
     this.type = TransactionType.income,
-    this.isPaid = true,         // 默认已结款
+    this.isPaid = false,
     DateTime? createdAt,
   }) : createdAt = createdAt ?? DateTime.now();
 
@@ -242,11 +246,17 @@ class Transaction {
       customerId: map['customerId'],
       copierId: map['copierId'],
       pages: map['pages'],
-      paymentMethod: PaymentMethod.values[map['paymentMethod'] ?? 0],
-      expenseCategory: ExpenseCategory.values[map['expenseCategory'] ?? 0],
-      type: TransactionType.values[map['type'] ?? 0],
-      isPaid: (map['isPaid'] ?? 1) == 1,
-      createdAt: DateTime.parse(map['createdAt']),
+      paymentMethod: (map['paymentMethod'] ?? 0) is int && (map['paymentMethod'] as int) < PaymentMethod.values.length
+          ? PaymentMethod.values[map['paymentMethod'] as int]
+          : PaymentMethod.cash,
+      expenseCategory: (map['expenseCategory'] ?? 0) is int && (map['expenseCategory'] as int) < ExpenseCategory.values.length
+          ? ExpenseCategory.values[map['expenseCategory'] as int]
+          : ExpenseCategory.other,
+      type: (map['type'] ?? 0) is int && (map['type'] as int) < TransactionType.values.length
+          ? TransactionType.values[map['type'] as int]
+          : TransactionType.income,
+      isPaid: (map['isPaid'] ?? 0) == 1,
+      createdAt: _parseDateTime(map['createdAt']),
     );
   }
 
@@ -282,10 +292,10 @@ class Transaction {
 }
 
 enum TransactionType {
-  income,      // 收入
-  expense,     // 支出
-  prepayment,  // 预交款
-  settlement, // 结款
+  income,
+  expense,
+  prepayment,
+  settlement,
 }
 
 enum PaymentMethod { cash, wechat, alipay, bankTransfer }
@@ -338,15 +348,15 @@ class InventoryItem {
   factory InventoryItem.fromMap(Map<String, dynamic> map) {
     return InventoryItem(
       id: map['id'],
-      name: map['name'],
-      category: map['category'],
+      name: map['name'] ?? '',
+      category: map['category'] ?? '',
       unit: map['unit'] ?? '包',
       currentStock: (map['currentStock'] ?? 0).toDouble(),
       usedStock: (map['usedStock'] ?? 0).toDouble(),
       maxStock: (map['maxStock'] ?? 0).toDouble(),
       minAlertStock: (map['minAlertStock'] ?? 5).toDouble(),
       purchasePrice: (map['purchasePrice'] ?? 0).toDouble(),
-      updatedAt: DateTime.parse(map['updatedAt']),
+      updatedAt: _parseDateTime(map['updatedAt']),
     );
   }
 
@@ -375,4 +385,13 @@ class InventoryItem {
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }
+}
+
+// ============ 安全日期解析 ============
+DateTime _parseDateTime(dynamic value) {
+  if (value is DateTime) return value;
+  if (value is String) {
+    return DateTime.tryParse(value) ?? DateTime.now();
+  }
+  return DateTime.now();
 }

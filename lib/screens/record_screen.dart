@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../models/models.dart';
+import '../helpers/formatters.dart';
 
 class RecordScreen extends StatefulWidget {
   const RecordScreen({super.key});
@@ -467,6 +468,7 @@ class _RecordScreenState extends State<RecordScreen> {
       pages: int.tryParse(_pagesController.text),
       paymentMethod: _selectedMethod,
       expenseCategory: _selectedCategory,
+      isPaid: _selectedCustomer == null, // 无客户则默认已结款
     );
 
     await provider.addTransaction(transaction);
@@ -483,53 +485,15 @@ class _RecordScreenState extends State<RecordScreen> {
     }
   }
 
-  String _getCategoryName(ExpenseCategory category) {
-    switch (category) {
-      case ExpenseCategory.printFee: return '打印费';
-      case ExpenseCategory.rentalFee: return '租赁费';
-      case ExpenseCategory.accessoryFee: return '配件费';
-      case ExpenseCategory.officeSupply: return '办公用品';
-      case ExpenseCategory.other: return '其他';
-    }
-  }
+  String _getCategoryName(ExpenseCategory category) => getCategoryName(category);
 
-  Color _getCategoryColor(ExpenseCategory category) {
-    switch (category) {
-      case ExpenseCategory.printFee: return Colors.blue;
-      case ExpenseCategory.rentalFee: return Colors.purple;
-      case ExpenseCategory.accessoryFee: return Colors.orange;
-      case ExpenseCategory.officeSupply: return Colors.green;
-      case ExpenseCategory.other: return Colors.grey;
-    }
-  }
+  Color _getCategoryColor(ExpenseCategory category) => getCategoryColor(category);
 
-  IconData _getCategoryIcon(ExpenseCategory category) {
-    switch (category) {
-      case ExpenseCategory.printFee: return Icons.print;
-      case ExpenseCategory.rentalFee: return Icons.desktop_windows;
-      case ExpenseCategory.accessoryFee: return Icons.build;
-      case ExpenseCategory.officeSupply: return Icons.inventory_2;
-      case ExpenseCategory.other: return Icons.more_horiz;
-    }
-  }
+  IconData _getCategoryIcon(ExpenseCategory category) => getCategoryIcon(category);
 
-  IconData _getMethodIcon(PaymentMethod method) {
-    switch (method) {
-      case PaymentMethod.cash: return Icons.money;
-      case PaymentMethod.wechat: return Icons.chat;
-      case PaymentMethod.alipay: return Icons.payment;
-      case PaymentMethod.bankTransfer: return Icons.account_balance;
-    }
-  }
+  IconData _getMethodIcon(PaymentMethod method) => getMethodIcon(method);
 
-  String _getMethodName(PaymentMethod method) {
-    switch (method) {
-      case PaymentMethod.cash: return '现金';
-      case PaymentMethod.wechat: return '微信';
-      case PaymentMethod.alipay: return '支付宝';
-      case PaymentMethod.bankTransfer: return '转账';
-    }
-  }
+  String _getMethodName(PaymentMethod method) => getMethodName(method);
 }
 
 // ============ 服务类型管理页面 ============

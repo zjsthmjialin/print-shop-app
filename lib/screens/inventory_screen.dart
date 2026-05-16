@@ -340,7 +340,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
             ClipRRect(
               borderRadius: BorderRadius.circular(4),
               child: LinearProgressIndicator(
-                value: (item.availableStock / item.maxStock).clamp(0, 1),
+                value: item.maxStock > 0 ? (item.availableStock / item.maxStock).clamp(0.0, 1.0) : 0.0,
                 backgroundColor: Colors.grey[200],
                 color: item.isLowStock ? Colors.orange : Colors.green,
                 minHeight: 10,
@@ -673,7 +673,7 @@ class _InventoryItemCard extends StatelessWidget {
             ClipRRect(
               borderRadius: BorderRadius.circular(4),
               child: LinearProgressIndicator(
-                value: (item.availableStock / item.maxStock).clamp(0, 1),
+                value: item.maxStock > 0 ? (item.availableStock / item.maxStock).clamp(0.0, 1.0) : 0.0,
                 backgroundColor: Colors.grey[200],
                 color: item.isLowStock ? Colors.orange : Colors.green,
                 minHeight: 8,

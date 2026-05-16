@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../providers/app_provider.dart';
 import '../models/models.dart';
+import '../helpers/formatters.dart';
 
 class CopierScreen extends StatefulWidget {
   const CopierScreen({super.key});
@@ -22,8 +23,11 @@ class _CopierScreenState extends State<CopierScreen> {
   Future<void> _loadRentalIncome() async {
     final provider = context.read<AppProvider>();
     final transactions = await provider.getAllTransactions();
+    final now = DateTime.now();
+    final startOfMonth = DateTime(now.year, now.month, 1);
     final income = transactions
-        .where((t) => t.expenseCategory == ExpenseCategory.rentalFee)
+        .where((t) => t.expenseCategory == ExpenseCategory.rentalFee &&
+            !t.createdAt.isBefore(startOfMonth))
         .fold(0.0, (sum, t) => sum + t.amount);
     if (mounted) {
       setState(() => _rentalIncome = income);
@@ -32,8 +36,6 @@ class _CopierScreenState extends State<CopierScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final currencyFormat = NumberFormat.currency(locale: 'zh_CN', symbol: '¥');
-
     return Scaffold(
       appBar: AppBar(title: const Text('租赁复印机')),
       body: Consumer<AppProvider>(
@@ -337,6 +339,7 @@ class _CopierScreenState extends State<CopierScreen> {
                 pages: pages,
                 expenseCategory: ExpenseCategory.rentalFee,
                 description: '${copier.name} 复印 ${pages} 张',
+                isPaid: true,
               );
               context.read<AppProvider>().addTransaction(transaction);
               Navigator.pop(context);

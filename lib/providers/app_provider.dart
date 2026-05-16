@@ -1,11 +1,10 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../models/models.dart';
-import '../services/database_service.dart';
 import '../services/storage_service.dart';
 import '../services/icloud_service.dart';
 
 class AppProvider extends ChangeNotifier {
-  final DatabaseService _db = DatabaseService.instance;
   final StorageService _storage = StorageService.instance;
 
   List<Customer> _customers = [];
@@ -22,6 +21,9 @@ class AppProvider extends ChangeNotifier {
   double _totalPrepaid = 0;
 
   bool _isLoading = true;
+  String? _lastError;
+
+  int _nextId = 1;
 
   List<Customer> get customers => _customers;
   List<Copier> get copiers => _copiers;
@@ -36,61 +38,92 @@ class AppProvider extends ChangeNotifier {
   double get totalPrepaid => _totalPrepaid;
   double get totalOwed => _totalUnpaid;
   bool get isLoading => _isLoading;
+  String? get lastError => _lastError;
 
   List<ServiceType> get activeServiceTypes => _serviceTypes.where((s) => s.isActive).toList();
   List<Copier> get idleCopiers => _copiers.where((c) => c.status == CopierStatus.idle).toList();
   List<InventoryItem> get lowStockItems => _inventoryItems.where((i) => i.isLowStock).toList();
 
+  int _allocateId() => _nextId++;
+
+  void _initNextId() {
+    final allIds = <int>[];
+    for (final c in _customers) {
+      if (c.id != null) allIds.add(c.id!);
+    }
+    for (final c in _copiers) {
+      if (c.id != null) allIds.add(c.id!);
+    }
+    for (final t in _transactions) {
+      if (t.id != null) allIds.add(t.id!);
+    }
+    for (final i in _inventoryItems) {
+      if (i.id != null) allIds.add(i.id!);
+    }
+    for (final s in _serviceTypes) {
+      if (s.id != null) allIds.add(s.id!);
+    }
+    _nextId = allIds.isEmpty ? 1 : allIds.reduce((a, b) => a > b ? a : b) + 1;
+  }
+
   Future<void> initialize() async {
     _isLoading = true;
+    _lastError = null;
     notifyListeners();
 
-    // 尝试初始化 iCloud Drive
-    final icloud = ICloudService();
-    await icloud.init();
+    try {
+      // 尝试初始化 iCloud Drive
+      final icloud = ICloudService();
+      await icloud.init();
 
-    // 初始化存储服务（优先使用 iCloud 路径）
-    await _storage.init(customPath: icloud.documentsPath);
+      // 初始化存储服务（优先使用 iCloud 路径）
+      await _storage.init(customPath: icloud.documentsPath);
 
-    // 加载存储的数据
-    _customers = await _storage.loadCustomers();
-    _copiers = await _storage.loadCopiers();
-    _transactions = await _storage.loadTransactions();
-    _inventoryItems = await _storage.loadInventory();
-    _serviceTypes = await _storage.loadServiceTypes();
+      // 加载存储的数据
+      _customers = await _storage.loadCustomers();
+      _copiers = await _storage.loadCopiers();
+      _transactions = await _storage.loadTransactions();
+      _inventoryItems = await _storage.loadInventory();
+      _serviceTypes = await _storage.loadServiceTypes();
 
-    // 如果没有服务类型，初始化默认类型
-    if (_serviceTypes.isEmpty) {
-      _db.initDefaultServiceTypes().then((_) async {
-        _serviceTypes = await _db.getAllServiceTypes();
-        await _storage.saveServiceTypes(_serviceTypes);
-      });
-    } else {
-      // 同步到内存数据库
-      for (final customer in _customers) {
-        await _db.insertCustomer(customer);
+      // 初始化 ID 计数器（从已有数据中的最大 ID 开始）
+      _initNextId();
+
+      // 如果没有服务类型，初始化默认类型
+      if (_serviceTypes.isEmpty) {
+        await _initDefaultServiceTypes();
       }
-      for (final copier in _copiers) {
-        await _db.insertCopier(copier);
-      }
-      for (final transaction in _transactions) {
-        await _db.insertTransaction(transaction);
-      }
-      for (final item in _inventoryItems) {
-        await _db.insertInventoryItem(item);
-      }
-      for (final serviceType in _serviceTypes) {
-        await _db.insertServiceType(serviceType);
-      }
+
+      await _loadStatistics();
+    } catch (e) {
+      _lastError = '初始化失败: $e';
     }
-
-    await loadStatistics();
 
     _isLoading = false;
     notifyListeners();
   }
 
-  Future<void> loadStatistics() async {
+  Future<void> _initDefaultServiceTypes() async {
+    final defaults = [
+      ServiceType(name: '黑白打印', category: ExpenseCategory.printFee, unitPrice: 0.2),
+      ServiceType(name: '彩色打印', category: ExpenseCategory.printFee, unitPrice: 1.0),
+      ServiceType(name: '复印', category: ExpenseCategory.printFee, unitPrice: 0.1),
+      ServiceType(name: '扫描', category: ExpenseCategory.printFee, unitPrice: 1.0),
+      ServiceType(name: '装订', category: ExpenseCategory.printFee, unitPrice: 5.0),
+      ServiceType(name: '名片', category: ExpenseCategory.printFee, unitPrice: 0.5),
+      ServiceType(name: '设计', category: ExpenseCategory.other, unitPrice: 100.0),
+      ServiceType(name: '租赁复印', category: ExpenseCategory.rentalFee, unitPrice: 0.15),
+      ServiceType(name: '配件销售', category: ExpenseCategory.accessoryFee, unitPrice: null),
+      ServiceType(name: '办公用品', category: ExpenseCategory.officeSupply, unitPrice: null),
+    ];
+
+    for (final service in defaults) {
+      _serviceTypes.add(service.copyWith(id: _allocateId()));
+    }
+    await _storage.saveServiceTypes(_serviceTypes);
+  }
+
+  Future<void> _loadStatistics() async {
     _todayIncome = _calculateTodayIncome();
     _monthIncome = _calculateMonthIncome();
     _monthExpense = _calculateMonthExpense();
@@ -105,7 +138,8 @@ class AppProvider extends ChangeNotifier {
     final startOfDay = DateTime(now.year, now.month, now.day);
     double total = 0;
     for (final t in _transactions) {
-      if (t.type == TransactionType.income && t.amount > 0 && t.createdAt.isAfter(startOfDay)) {
+      if (t.type == TransactionType.income && t.amount > 0 &&
+          !t.createdAt.isBefore(startOfDay)) {
         total += t.amount;
       }
     }
@@ -117,7 +151,8 @@ class AppProvider extends ChangeNotifier {
     final startOfMonth = DateTime(now.year, now.month, 1);
     double total = 0;
     for (final t in _transactions) {
-      if (t.type == TransactionType.income && t.amount > 0 && t.createdAt.isAfter(startOfMonth)) {
+      if (t.type == TransactionType.income && t.amount > 0 &&
+          !t.createdAt.isBefore(startOfMonth)) {
         total += t.amount;
       }
     }
@@ -129,7 +164,8 @@ class AppProvider extends ChangeNotifier {
     final startOfMonth = DateTime(now.year, now.month, 1);
     double total = 0;
     for (final t in _transactions) {
-      if (t.type == TransactionType.expense && t.amount < 0 && t.createdAt.isAfter(startOfMonth)) {
+      if (t.type == TransactionType.expense && t.amount < 0 &&
+          !t.createdAt.isBefore(startOfMonth)) {
         total += t.amount.abs();
       }
     }
@@ -139,7 +175,8 @@ class AppProvider extends ChangeNotifier {
   double _calculateTotalUnpaid() {
     double total = 0;
     for (final t in _transactions) {
-      if (t.customerId != null && t.type == TransactionType.income && !t.isPaid && t.amount > 0) {
+      if (t.customerId != null && t.type == TransactionType.income &&
+          !t.isPaid && t.amount > 0) {
         total += t.amount;
       }
     }
@@ -149,11 +186,12 @@ class AppProvider extends ChangeNotifier {
   double _calculateTotalPaid() {
     double total = 0;
     for (final t in _transactions) {
-      if (t.customerId != null && t.type == TransactionType.income && t.amount > 0) {
+      if (t.customerId != null && t.type == TransactionType.income &&
+          t.isPaid && t.amount > 0) {
         total += t.amount;
       }
     }
-    return total - _totalUnpaid;
+    return total;
   }
 
   double _calculateTotalPrepaid() {
@@ -166,25 +204,41 @@ class AppProvider extends ChangeNotifier {
 
   // ============ 服务类型操作 ============
 
-  Future<void> loadServiceTypes() async {
-    _serviceTypes = await _db.getAllServiceTypes();
-    await _storage.saveServiceTypes(_serviceTypes);
-    notifyListeners();
-  }
-
   Future<void> addServiceType(ServiceType serviceType) async {
-    await _db.insertServiceType(serviceType);
-    await loadServiceTypes();
+    try {
+      final withId = serviceType.copyWith(id: _allocateId());
+      _serviceTypes.add(withId);
+      await _storage.saveServiceTypes(_serviceTypes);
+      notifyListeners();
+    } catch (e) {
+      _lastError = '添加服务类型失败: $e';
+      notifyListeners();
+    }
   }
 
   Future<void> updateServiceType(ServiceType serviceType) async {
-    await _db.updateServiceType(serviceType);
-    await loadServiceTypes();
+    try {
+      final index = _serviceTypes.indexWhere((s) => s.id == serviceType.id);
+      if (index != -1) {
+        _serviceTypes[index] = serviceType;
+      }
+      await _storage.saveServiceTypes(_serviceTypes);
+      notifyListeners();
+    } catch (e) {
+      _lastError = '更新服务类型失败: $e';
+      notifyListeners();
+    }
   }
 
   Future<void> deleteServiceType(int id) async {
-    await _db.deleteServiceType(id);
-    await loadServiceTypes();
+    try {
+      _serviceTypes.removeWhere((s) => s.id == id);
+      await _storage.saveServiceTypes(_serviceTypes);
+      notifyListeners();
+    } catch (e) {
+      _lastError = '删除服务类型失败: $e';
+      notifyListeners();
+    }
   }
 
   List<ServiceType> getServiceTypesByCategory(ExpenseCategory category) {
@@ -198,22 +252,40 @@ class AppProvider extends ChangeNotifier {
   // ============ 客户操作 ============
 
   Future<void> addCustomer(Customer customer) async {
-    await _db.insertCustomer(customer);
-    _customers = await _db.getAllCustomers();
-    await _storage.saveCustomers(_customers);
-    await loadStatistics();
+    try {
+      final withId = customer.copyWith(id: _allocateId());
+      _customers.add(withId);
+      await _storage.saveCustomers(_customers);
+      await _loadStatistics();
+    } catch (e) {
+      _lastError = '添加客户失败: $e';
+      notifyListeners();
+    }
   }
 
   Future<void> updateCustomer(Customer customer) async {
-    await _db.updateCustomer(customer);
-    _customers = await _db.getAllCustomers();
-    await _storage.saveCustomers(_customers);
+    try {
+      final index = _customers.indexWhere((c) => c.id == customer.id);
+      if (index != -1) {
+        _customers[index] = customer;
+      }
+      await _storage.saveCustomers(_customers);
+      await _loadStatistics();
+    } catch (e) {
+      _lastError = '更新客户失败: $e';
+      notifyListeners();
+    }
   }
 
   Future<void> deleteCustomer(int id) async {
-    await _db.deleteCustomer(id);
-    _customers = await _db.getAllCustomers();
-    await _storage.saveCustomers(_customers);
+    try {
+      _customers.removeWhere((c) => c.id == id);
+      await _storage.saveCustomers(_customers);
+      await _loadStatistics();
+    } catch (e) {
+      _lastError = '删除客户失败: $e';
+      notifyListeners();
+    }
   }
 
   Future<void> addCustomerPrepaid(int customerId, double amount) async {
@@ -229,7 +301,8 @@ class AppProvider extends ChangeNotifier {
   Future<double> getCustomerUnpaidAmount(int customerId) async {
     double total = 0;
     for (final t in _transactions) {
-      if (t.customerId == customerId && t.type == TransactionType.income && !t.isPaid && t.amount > 0) {
+      if (t.customerId == customerId && t.type == TransactionType.income &&
+          !t.isPaid && t.amount > 0) {
         total += t.amount;
       }
     }
@@ -239,7 +312,8 @@ class AppProvider extends ChangeNotifier {
   Future<double> getCustomerPaidAmount(int customerId) async {
     double total = 0;
     for (final t in _transactions) {
-      if (t.customerId == customerId && t.type == TransactionType.income && t.amount > 0) {
+      if (t.customerId == customerId && t.type == TransactionType.income &&
+          t.isPaid && t.amount > 0) {
         total += t.amount;
       }
     }
@@ -249,55 +323,113 @@ class AppProvider extends ChangeNotifier {
   // ============ 复印机操作 ============
 
   Future<void> addCopier(Copier copier) async {
-    await _db.insertCopier(copier);
-    _copiers = await _db.getAllCopiers();
-    await _storage.saveCopiers(_copiers);
-    notifyListeners();
+    try {
+      final withId = copier.copyWith(id: _allocateId());
+      _copiers.add(withId);
+      await _storage.saveCopiers(_copiers);
+      notifyListeners();
+    } catch (e) {
+      _lastError = '添加复印机失败: $e';
+      notifyListeners();
+    }
   }
 
   Future<void> updateCopier(Copier copier) async {
-    await _db.updateCopier(copier);
-    _copiers = await _db.getAllCopiers();
-    await _storage.saveCopiers(_copiers);
+    try {
+      final index = _copiers.indexWhere((c) => c.id == copier.id);
+      if (index != -1) {
+        _copiers[index] = copier;
+      }
+      await _storage.saveCopiers(_copiers);
+      notifyListeners();
+    } catch (e) {
+      _lastError = '更新复印机失败: $e';
+      notifyListeners();
+    }
   }
 
   // ============ 交易操作 ============
 
   Future<void> addTransaction(Transaction transaction) async {
-    await _db.insertTransaction(transaction);
-    _transactions = await _db.getAllTransactions();
-    await _storage.saveTransactions(_transactions);
-    await loadStatistics();
+    try {
+      final withId = transaction.copyWith(id: _allocateId());
+      _transactions.insert(0, withId);
+
+      // 如果是预交款类型，更新客户预交款余额
+      if (transaction.type == TransactionType.prepayment && transaction.customerId != null) {
+        final customerIndex = _customers.indexWhere(
+          (c) => c.id == transaction.customerId,
+        );
+        if (customerIndex != -1) {
+          _customers[customerIndex] = _customers[customerIndex].copyWith(
+            prepaidBalance: _customers[customerIndex].prepaidBalance + transaction.amount,
+          );
+          await _storage.saveCustomers(_customers);
+        }
+      }
+
+      await _storage.saveTransactions(_transactions);
+      await _loadStatistics();
+    } catch (e) {
+      _lastError = '添加交易失败: $e';
+      notifyListeners();
+    }
   }
 
   Future<void> updateTransaction(Transaction transaction) async {
-    await _db.updateTransaction(transaction);
-    _transactions = await _db.getAllTransactions();
-    await _storage.saveTransactions(_transactions);
-    await loadStatistics();
+    try {
+      final index = _transactions.indexWhere((t) => t.id == transaction.id);
+      if (index != -1) {
+        _transactions[index] = transaction;
+      }
+      await _storage.saveTransactions(_transactions);
+      await _loadStatistics();
+    } catch (e) {
+      _lastError = '更新交易失败: $e';
+      notifyListeners();
+    }
   }
 
   Future<List<Transaction>> getAllTransactions() async {
-    return _transactions;
+    return List.of(_transactions);
   }
 
   Future<List<Transaction>> getTransactionsByCustomer(int customerId) async {
     return _transactions.where((t) => t.customerId == customerId).toList();
   }
 
+  List<Transaction> getTransactionsByDateRange(DateTime start, DateTime end) {
+    return _transactions.where((t) =>
+      !t.createdAt.isBefore(start) && !t.createdAt.isAfter(end)
+    ).toList();
+  }
+
   // ============ 库存操作 ============
 
   Future<void> addInventoryItem(InventoryItem item) async {
-    await _db.insertInventoryItem(item);
-    _inventoryItems = await _db.getAllInventoryItems();
-    await _storage.saveInventory(_inventoryItems);
-    notifyListeners();
+    try {
+      final withId = item.copyWith(id: _allocateId());
+      _inventoryItems.add(withId);
+      await _storage.saveInventory(_inventoryItems);
+      notifyListeners();
+    } catch (e) {
+      _lastError = '添加库存失败: $e';
+      notifyListeners();
+    }
   }
 
   Future<void> updateInventoryItem(InventoryItem item) async {
-    await _db.updateInventoryItem(item);
-    _inventoryItems = await _db.getAllInventoryItems();
-    await _storage.saveInventory(_inventoryItems);
+    try {
+      final index = _inventoryItems.indexWhere((i) => i.id == item.id);
+      if (index != -1) {
+        _inventoryItems[index] = item;
+      }
+      await _storage.saveInventory(_inventoryItems);
+      notifyListeners();
+    } catch (e) {
+      _lastError = '更新库存失败: $e';
+      notifyListeners();
+    }
   }
 
   // ============ 统计操作 ============
@@ -319,7 +451,15 @@ class AppProvider extends ChangeNotifier {
   // ============ 数据导出/导入 ============
 
   Future<String> exportData() async {
-    return await _storage.exportAllData();
+    final data = {
+      'customers': _customers.map((c) => c.toMap()).toList(),
+      'serviceTypes': _serviceTypes.map((s) => s.toMap()).toList(),
+      'copiers': _copiers.map((c) => c.toMap()).toList(),
+      'transactions': _transactions.map((t) => t.toMap()).toList(),
+      'inventory': _inventoryItems.map((i) => i.toMap()).toList(),
+      'exportTime': DateTime.now().toIso8601String(),
+    };
+    return jsonEncode(data);
   }
 
   Future<void> importData(String jsonData) async {

@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../providers/app_provider.dart';
 import '../models/models.dart';
+import '../helpers/formatters.dart';
+import 'settlement_screen.dart';
 
 class CustomerScreen extends StatefulWidget {
   const CustomerScreen({super.key});
@@ -153,8 +155,7 @@ class _CustomerScreenState extends State<CustomerScreen> {
             onPressed: () {
               final amount = double.tryParse(amountController.text) ?? 0;
               if (amount <= 0) return;
-              provider.addCustomerPrepaid(customer.id!, amount);
-              // 同时记录预交款交易
+              // addTransaction 会自动更新客户预交款余额
               final transaction = Transaction(
                 amount: amount,
                 customerId: customer.id,
@@ -218,8 +219,6 @@ class _CustomerCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final currencyFormat = NumberFormat.currency(locale: 'zh_CN', symbol: '¥');
-
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       child: Material(
@@ -365,8 +364,6 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final currencyFormat = NumberFormat.currency(locale: 'zh_CN', symbol: '¥');
-
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.customer.name),
@@ -456,7 +453,13 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton.icon(
-                        onPressed: () => _showSettlementDialog(),
+                        onPressed: () async {
+                          await Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => SettlementScreen(initialCustomer: widget.customer)),
+                          );
+                          _loadData();
+                        },
                         icon: const Icon(Icons.check_circle),
                         label: Text('结款 ¥${_unpaid.toStringAsFixed(2)}'),
                         style: ElevatedButton.styleFrom(backgroundColor: Colors.green, padding: const EdgeInsets.symmetric(vertical: 16)),
@@ -514,7 +517,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
             onPressed: () {
               final amount = double.tryParse(amountController.text) ?? 0;
               if (amount <= 0) return;
-              provider.addCustomerPrepaid(widget.customer.id!, amount);
+              // addTransaction 会自动更新客户预交款余额
               final transaction = Transaction(
                 amount: amount,
                 customerId: widget.customer.id,
@@ -533,70 +536,6 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
     );
   }
 
-  void _showSettlementDialog() {
-    final amountController = TextEditingController(text: _unpaid.toStringAsFixed(2));
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('结款'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('未结款金额: ¥${_unpaid.toStringAsFixed(2)}'),
-            const SizedBox(height: 16),
-            TextField(
-              controller: amountController,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(labelText: '结款金额', prefixIcon: Icon(Icons.money), prefixText: '¥'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
-          ElevatedButton(
-            onPressed: () {
-              final amount = double.tryParse(amountController.text) ?? 0;
-              if (amount <= 0) return;
-              // 将该客户所有未结款标记为已结款
-              _settleAllUnpaid(amount);
-              Navigator.pop(context);
-            },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-            child: const Text('确认结款'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _settleAllUnpaid(double settlementAmount) async {
-    final provider = context.read<AppProvider>();
-
-    // 将未结款交易标记为已结款
-    for (final t in _transactions) {
-      if (t.type == TransactionType.income && !t.isPaid) {
-        await provider.updateTransaction(t.copyWith(isPaid: true));
-      }
-    }
-
-    // 记录结款交易
-    final transaction = Transaction(
-      amount: settlementAmount,
-      customerId: widget.customer.id,
-      expenseCategory: ExpenseCategory.other,
-      type: TransactionType.settlement,
-      description: '结款',
-    );
-    await provider.addTransaction(transaction);
-
-    // 如果有预交款，先用预交款抵扣
-    if (widget.customer.prepaidBalance > 0) {
-      await provider.addCustomerPrepaid(widget.customer.id!, -settlementAmount.clamp(0.0, widget.customer.prepaidBalance));
-    }
-
-    _loadData();
-  }
 }
 
 class _TransactionItem extends StatelessWidget {
@@ -662,33 +601,9 @@ class _TransactionItem extends StatelessWidget {
     );
   }
 
-  String _getCategoryName(ExpenseCategory category) {
-    switch (category) {
-      case ExpenseCategory.printFee: return '打印费';
-      case ExpenseCategory.rentalFee: return '租赁费';
-      case ExpenseCategory.accessoryFee: return '配件费';
-      case ExpenseCategory.officeSupply: return '办公用品';
-      case ExpenseCategory.other: return '其他';
-    }
-  }
+  String _getCategoryName(ExpenseCategory category) => getCategoryName(category);
 
-  Color _getCategoryColor(ExpenseCategory category) {
-    switch (category) {
-      case ExpenseCategory.printFee: return Colors.blue;
-      case ExpenseCategory.rentalFee: return Colors.purple;
-      case ExpenseCategory.accessoryFee: return Colors.orange;
-      case ExpenseCategory.officeSupply: return Colors.green;
-      case ExpenseCategory.other: return Colors.grey;
-    }
-  }
+  Color _getCategoryColor(ExpenseCategory category) => getCategoryColor(category);
 
-  IconData _getCategoryIcon(ExpenseCategory category) {
-    switch (category) {
-      case ExpenseCategory.printFee: return Icons.print;
-      case ExpenseCategory.rentalFee: return Icons.desktop_windows;
-      case ExpenseCategory.accessoryFee: return Icons.build;
-      case ExpenseCategory.officeSupply: return Icons.inventory_2;
-      case ExpenseCategory.other: return Icons.more_horiz;
-    }
-  }
+  IconData _getCategoryIcon(ExpenseCategory category) => getCategoryIcon(category);
 }

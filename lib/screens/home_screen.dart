@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:intl/intl.dart';
 import '../providers/app_provider.dart';
 import '../models/models.dart';
+import '../helpers/formatters.dart';
 import 'record_screen.dart';
 import 'customer_screen.dart';
 import 'inventory_screen.dart';
@@ -50,8 +50,6 @@ class HomeContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final currencyFormat = NumberFormat.currency(locale: 'zh_CN', symbol: '¥');
-
     return Consumer<AppProvider>(
       builder: (context, provider, _) {
         if (provider.isLoading) return const Center(child: CircularProgressIndicator());
@@ -128,10 +126,10 @@ class HomeContent extends StatelessWidget {
                           )),
                           const SizedBox(width: 12),
                           Expanded(child: _PaymentCard(
-                            label: '本月净收',
-                            value: currencyFormat.format(provider.monthIncome - provider.monthExpense.abs()),
-                            icon: Icons.trending_up,
-                            color: Colors.purple,
+                            label: '本月支出',
+                            value: currencyFormat.format(provider.monthExpense),
+                            icon: Icons.trending_down,
+                            color: Colors.orange,
                           )),
                         ],
                       ),
@@ -268,7 +266,7 @@ class HomeContent extends StatelessWidget {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: Text(_getCategoryName(category)),
+          title: Text(getCategoryName(category)),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -307,7 +305,7 @@ class HomeContent extends StatelessWidget {
                 children: PaymentMethod.values.map((method) {
                   final isSelected = selectedMethod == method;
                   return ChoiceChip(
-                    label: Text(_getMethodName(method)),
+                    label: Text(getMethodName(method)),
                     selected: isSelected,
                     onSelected: (_) => setState(() => selectedMethod = method),
                   );
@@ -331,12 +329,13 @@ class HomeContent extends StatelessWidget {
                   amount: amount,
                   paymentMethod: selectedMethod,
                   expenseCategory: category,
-                  description: selectedType?.name ?? _getCategoryName(category),
+                  description: selectedType?.name ?? getCategoryName(category),
+                  isPaid: true,
                 );
                 provider.addTransaction(transaction);
                 Navigator.pop(dialogContext);
                 ScaffoldMessenger.of(dialogContext).showSnackBar(
-                  SnackBar(content: Text('已添加: ${selectedType?.name ?? _getCategoryName(category)} ¥$amount'), backgroundColor: Colors.green),
+                  SnackBar(content: Text('已添加: ${selectedType?.name ?? getCategoryName(category)} ¥$amount'), backgroundColor: Colors.green),
                 );
               },
               child: const Text('确认'),
@@ -389,25 +388,6 @@ class HomeContent extends StatelessWidget {
       ),
     );
   }
-
-  String _getMethodName(PaymentMethod method) {
-    switch (method) {
-      case PaymentMethod.cash: return '现金';
-      case PaymentMethod.wechat: return '微信';
-      case PaymentMethod.alipay: return '支付宝';
-      case PaymentMethod.bankTransfer: return '转账';
-    }
-  }
-
-  String _getCategoryName(ExpenseCategory category) {
-    switch (category) {
-      case ExpenseCategory.printFee: return '打印费';
-      case ExpenseCategory.rentalFee: return '租赁费';
-      case ExpenseCategory.accessoryFee: return '配件费';
-      case ExpenseCategory.officeSupply: return '办公用品';
-      case ExpenseCategory.other: return '其他';
-    }
-  }
 }
 
 class _StatCard extends StatelessWidget {
@@ -423,7 +403,7 @@ class _StatCard extends StatelessWidget {
       decoration: BoxDecoration(
         gradient: gradient,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, 4))],
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 10, offset: const Offset(0, 4))],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -459,13 +439,13 @@ class _PaymentCard extends StatelessWidget {
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
           border: Border(left: BorderSide(color: color, width: 4)),
-          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 2))],
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 10, offset: const Offset(0, 2))],
         ),
         child: Row(
           children: [
             Container(
               padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(10)),
+              decoration: BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(10)),
               child: Icon(icon, color: color, size: 20),
             ),
             const SizedBox(width: 12),
@@ -501,7 +481,7 @@ class _QuickActionButton extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 2))]),
+        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 10, offset: const Offset(0, 2))]),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -522,7 +502,6 @@ class _TransactionItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isIncome = transaction.amount > 0;
-    final currencyFormat = NumberFormat.currency(locale: 'zh_CN', symbol: '¥');
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -532,17 +511,17 @@ class _TransactionItem extends StatelessWidget {
         children: [
           Container(
             padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(color: _getCategoryColor(transaction.expenseCategory).withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12)),
-            child: Icon(_getCategoryIcon(transaction.expenseCategory), color: _getCategoryColor(transaction.expenseCategory)),
+            decoration: BoxDecoration(color: getCategoryColor(transaction.expenseCategory).withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12)),
+            child: Icon(getCategoryIcon(transaction.expenseCategory), color: getCategoryColor(transaction.expenseCategory)),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(transaction.description ?? _getCategoryName(transaction.expenseCategory), style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+                Text(transaction.description ?? getCategoryName(transaction.expenseCategory), style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
                 const SizedBox(height: 4),
-                Text(DateFormat('MM-dd HH:mm').format(transaction.createdAt), style: TextStyle(color: Colors.grey[500], fontSize: 12)),
+                Text('${transaction.createdAt.month.toString().padLeft(2, '0')}-${transaction.createdAt.day.toString().padLeft(2, '0')} ${transaction.createdAt.hour.toString().padLeft(2, '0')}:${transaction.createdAt.minute.toString().padLeft(2, '0')}', style: TextStyle(color: Colors.grey[500], fontSize: 12)),
                 if (transaction.pages != null && transaction.pages! > 0)
                   Text('${transaction.pages}张', style: TextStyle(color: Colors.grey[400], fontSize: 11)),
               ],
@@ -556,51 +535,12 @@ class _TransactionItem extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(4)),
-                child: Text(_getMethodName(transaction.paymentMethod), style: TextStyle(color: Colors.grey[600], fontSize: 10)),
+                child: Text(getMethodName(transaction.paymentMethod), style: TextStyle(color: Colors.grey[600], fontSize: 10)),
               ),
             ],
           ),
         ],
       ),
     );
-  }
-
-  String _getCategoryName(ExpenseCategory category) {
-    switch (category) {
-      case ExpenseCategory.printFee: return '打印费';
-      case ExpenseCategory.rentalFee: return '租赁费';
-      case ExpenseCategory.accessoryFee: return '配件费';
-      case ExpenseCategory.officeSupply: return '办公用品';
-      case ExpenseCategory.other: return '其他';
-    }
-  }
-
-  Color _getCategoryColor(ExpenseCategory category) {
-    switch (category) {
-      case ExpenseCategory.printFee: return Colors.blue;
-      case ExpenseCategory.rentalFee: return Colors.purple;
-      case ExpenseCategory.accessoryFee: return Colors.orange;
-      case ExpenseCategory.officeSupply: return Colors.green;
-      case ExpenseCategory.other: return Colors.grey;
-    }
-  }
-
-  IconData _getCategoryIcon(ExpenseCategory category) {
-    switch (category) {
-      case ExpenseCategory.printFee: return Icons.print;
-      case ExpenseCategory.rentalFee: return Icons.desktop_windows;
-      case ExpenseCategory.accessoryFee: return Icons.build;
-      case ExpenseCategory.officeSupply: return Icons.inventory_2;
-      case ExpenseCategory.other: return Icons.more_horiz;
-    }
-  }
-
-  String _getMethodName(PaymentMethod method) {
-    switch (method) {
-      case PaymentMethod.cash: return '现金';
-      case PaymentMethod.wechat: return '微信';
-      case PaymentMethod.alipay: return '支付宝';
-      case PaymentMethod.bankTransfer: return '转账';
-    }
   }
 }

@@ -3,9 +3,13 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../providers/app_provider.dart';
 import '../models/models.dart';
+import '../helpers/formatters.dart';
 
 class SettlementScreen extends StatefulWidget {
-  const SettlementScreen({super.key});
+  final Customer? initialCustomer;
+
+  const SettlementScreen({super.key, this.initialCustomer});
+
   @override
   State<SettlementScreen> createState() => _SettlementScreenState();
 }
@@ -15,10 +19,18 @@ class _SettlementScreenState extends State<SettlementScreen> {
   final _amountController = TextEditingController();
   PaymentMethod _selectedMethod = PaymentMethod.cash;
   bool _usePrepaid = false;
+  double _customerUnpaid = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialCustomer != null) {
+      _selectCustomer(widget.initialCustomer!);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final currencyFormat = NumberFormat.currency(locale: 'zh_CN', symbol: '¥');
     final provider = context.watch<AppProvider>();
 
     return Scaffold(
@@ -57,30 +69,32 @@ class _SettlementScreenState extends State<SettlementScreen> {
               ),
             ),
             const SizedBox(height: 24),
-            const Text('选择结账客户', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 12),
-            if (provider.customers.isEmpty)
-              Container(
-                padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(12)),
-                child: Center(
-                  child: Column(
-                    children: [
-                      Icon(Icons.people_outline, size: 48, color: Colors.grey[400]),
-                      const SizedBox(height: 12),
-                      Text('暂无客户', style: TextStyle(color: Colors.grey[600])),
-                    ],
+            if (widget.initialCustomer == null) ...[
+              const Text('选择结账客户', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 12),
+              if (provider.customers.isEmpty)
+                Container(
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(12)),
+                  child: Center(
+                    child: Column(
+                      children: [
+                        Icon(Icons.people_outline, size: 48, color: Colors.grey[400]),
+                        const SizedBox(height: 12),
+                        Text('暂无客户', style: TextStyle(color: Colors.grey[600])),
+                      ],
+                    ),
                   ),
-                ),
-              )
-            else
-              ...provider.customers.map((customer) => _CustomerSelectItem(
-                customer: customer,
-                isSelected: _selectedCustomer?.id == customer.id,
-                onTap: () => _selectCustomer(customer),
-                currencyFormat: currencyFormat,
-              )),
-            const SizedBox(height: 24),
+                )
+              else
+                ...provider.customers.map((customer) => _CustomerSelectItem(
+                  customer: customer,
+                  isSelected: _selectedCustomer?.id == customer.id,
+                  onTap: () => _selectCustomer(customer),
+                  currencyFormat: currencyFormat,
+                )),
+              const SizedBox(height: 24),
+            ],
             const Text('收款方式', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
             Row(
@@ -121,10 +135,11 @@ class _SettlementScreenState extends State<SettlementScreen> {
                 filled: true,
                 fillColor: Colors.grey[100],
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                hintText: _customerUnpaid > 0 ? '欠款: ${currencyFormat.format(_customerUnpaid)}' : null,
               ),
               style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
             ),
-            if (provider.totalPrepaid > 0) ...[
+            if (_selectedCustomer != null && _selectedCustomer!.prepaidBalance > 0) ...[
               const SizedBox(height: 16),
               Container(
                 padding: const EdgeInsets.all(16),
@@ -136,7 +151,7 @@ class _SettlementScreenState extends State<SettlementScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const Text('使用预缴余额抵扣', style: TextStyle(fontWeight: FontWeight.bold)),
-                          Text('当前预缴: ${currencyFormat.format(provider.totalPrepaid)}', style: TextStyle(color: Colors.grey[600], fontSize: 12)),
+                          Text('当前预缴: ${currencyFormat.format(_selectedCustomer!.prepaidBalance)}', style: TextStyle(color: Colors.grey[600], fontSize: 12)),
                         ],
                       ),
                     ),
@@ -179,13 +194,12 @@ class _SettlementScreenState extends State<SettlementScreen> {
 
   void _selectCustomer(Customer customer) async {
     final provider = context.read<AppProvider>();
-    final transactions = await provider.getAllTransactions();
-    final customerTransactions = transactions.where((t) => t.customerId == customer.id).toList();
-    final total = customerTransactions.fold(0.0, (sum, t) => sum + t.amount);
+    final unpaid = await provider.getCustomerUnpaidAmount(customer.id!);
 
     setState(() {
       _selectedCustomer = customer;
-      _amountController.text = total.toStringAsFixed(2);
+      _customerUnpaid = unpaid;
+      _amountController.text = unpaid.toStringAsFixed(2);
       _usePrepaid = false;
     });
   }
@@ -194,15 +208,31 @@ class _SettlementScreenState extends State<SettlementScreen> {
     final amount = double.tryParse(_amountController.text) ?? 0;
     if (amount <= 0 || _selectedCustomer == null) return;
 
+    // 将该客户所有未结款标记为已结款
+    final transactions = await provider.getTransactionsByCustomer(_selectedCustomer!.id!);
+    for (final t in transactions) {
+      if (t.type == TransactionType.income && !t.isPaid) {
+        await provider.updateTransaction(t.copyWith(isPaid: true));
+      }
+    }
+
+    // 记录结款交易
     final transaction = Transaction(
       amount: amount,
       customerId: _selectedCustomer!.id,
       paymentMethod: _selectedMethod,
       expenseCategory: ExpenseCategory.other,
+      type: TransactionType.settlement,
       description: '结账收款',
+      isPaid: true,
     );
-
     await provider.addTransaction(transaction);
+
+    // 如果选择使用预交款抵扣，扣除相应金额
+    if (_usePrepaid && _selectedCustomer!.prepaidBalance > 0) {
+      final deduction = amount.clamp(0.0, _selectedCustomer!.prepaidBalance);
+      await provider.addCustomerPrepaid(_selectedCustomer!.id!, -deduction);
+    }
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -215,23 +245,9 @@ class _SettlementScreenState extends State<SettlementScreen> {
     }
   }
 
-  IconData _getMethodIcon(PaymentMethod method) {
-    switch (method) {
-      case PaymentMethod.cash: return Icons.money;
-      case PaymentMethod.wechat: return Icons.chat;
-      case PaymentMethod.alipay: return Icons.payment;
-      case PaymentMethod.bankTransfer: return Icons.account_balance;
-    }
-  }
+  IconData _getMethodIcon(PaymentMethod method) => getMethodIcon(method);
 
-  String _getMethodName(PaymentMethod method) {
-    switch (method) {
-      case PaymentMethod.cash: return '现金';
-      case PaymentMethod.wechat: return '微信';
-      case PaymentMethod.alipay: return '支付宝';
-      case PaymentMethod.bankTransfer: return '转账';
-    }
-  }
+  String _getMethodName(PaymentMethod method) => getMethodName(method);
 }
 
 class _CustomerSelectItem extends StatelessWidget {
