@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(flutter analyze *)",
+      "Bash(flutter build *)",
+      "Bash(pod --version)",
+      "Bash(sudo gem install cocoapods)",
+      "Bash(brew install *)",
+      "Bash(xcrun simctl *)",
+      "Bash(python3 -c ' *)",
+      "Bash(xcodebuild -version)",
+      "Bash(xcodebuild -showsdks)",
+      "Bash(open -a Simulator)",
+      "Bash(xcodebuild -downloadPlatform iOS)"
+    ]
+  }
+}
